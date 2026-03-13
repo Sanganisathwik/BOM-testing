@@ -1,0 +1,17 @@
+# Environment variables
+.env
+backend/.env
+frontend/.env
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+db.sqlite3
+
+# Node
+node_modules/
+dist/
+build/
+.DS_Store
