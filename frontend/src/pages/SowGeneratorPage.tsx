@@ -1,5 +1,7 @@
 import React, { useState, ChangeEvent, FormEvent } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ==========================================
 // TYPES & INTERFACES
@@ -26,6 +28,7 @@ interface BomItem {
     total_price: number;
     currency: string;
     remarks?: string;
+    image_url?: string;
 }
 
 interface GenerateSowResponse {
@@ -238,9 +241,11 @@ const RequirementForm: React.FC<RequirementFormProps> = ({ onGenerate, loading }
 };
 
 const OutputView: React.FC<OutputViewProps> = ({ data }) => {
+    const [viewTab, setViewTab] = useState<'bom' | 'sow'>('sow');
+
     if (!data) return null;
 
-    const { bom, sizing } = data;
+    const { bom, sizing, sow_text } = data;
     const subTotal = bom.reduce((sum: number, item: BomItem) => sum + item.total_price, 0);
     const discountRate = sizing.discount_percentage || 0;
     const discountAmount = subTotal * (discountRate / 100);
@@ -250,9 +255,8 @@ const OutputView: React.FC<OutputViewProps> = ({ data }) => {
     const downloadCSV = () => {
         const headers = ["Location,Vendor,Category,Item,Model,Description,Quantity,Unit Price,Total Price,Currency"];
         const rows = bom.map((item: BomItem) =>
-            `"${item.location || ''}","${item.remarks ? (item.remarks.includes('Aruba') ? 'Aruba' : (item.remarks.includes('Cisco') ? 'Cisco' : '')) : ''}","${item.category}","${item.device_type}","${item.model}","${item.description}",${item.quantity},${item.unit_price},${item.total_price},"${item.currency}"`
+            `"${item.location || ''}","${item.remarks || ''}","${item.category}","${item.device_type}","${item.model}","${item.description}",${item.quantity},${item.unit_price},${item.total_price},"${item.currency}"`
         );
-        // Append summary rows
         const summary = [
             `"", "", "", "", "", "Subtotal", "", "", ${subTotal}, "${currency}"`,
             `"", "", "", "", "", "Discount (${discountRate}%)", "", "", -${discountAmount}, "${currency}"`,
@@ -262,7 +266,6 @@ const OutputView: React.FC<OutputViewProps> = ({ data }) => {
         const element = document.createElement("a");
         const file = new Blob([csvContent], { type: 'text/csv' });
         element.href = URL.createObjectURL(file);
-        // Clean filename from location
         const filenameLoc = sizing.location ? sizing.location.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'predicted';
         element.download = `${filenameLoc}_BOM.csv`;
         document.body.appendChild(element);
@@ -270,76 +273,140 @@ const OutputView: React.FC<OutputViewProps> = ({ data }) => {
         document.body.removeChild(element);
     };
 
+    const downloadHLD = () => {
+        const element = document.createElement("a");
+        const file = new Blob([sow_text], { type: 'text/markdown' });
+        element.href = URL.createObjectURL(file);
+        const filenameLoc = sizing.location ? sizing.location.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'predicted';
+        element.download = `${filenameLoc}_HLD.md`;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+    };
+
     return (
         <div className="output-view" style={{ marginTop: '3rem' }}>
-
-            {/* Sizing Summary */}
-            <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#e2e3e5', borderRadius: '8px' }}>
-                <h3>Predicted Sizing for {sizing.location || 'Site'}</h3>
-                <ul style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', listStyle: 'none', padding: 0 }}>
-                    <li><strong>Total Ports Needed:</strong> {sizing.total_ports_needed}</li>
-                    <li><strong>Switches Required:</strong> {sizing.switches_required_48_port}</li>
-                    <li><strong>PoE Ports:</strong> {sizing.poe_ports_required}</li>
-                    <li><strong>Uplinks:</strong> {sizing.uplinks_required}</li>
-                </ul>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h2>Final Bill of Materials ({currency})</h2>
-                <button onClick={downloadCSV} style={{ padding: '0.5rem 1rem', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-                    Download CSV
+            
+            {/* View Switching Tabs */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '2px solid #e9ecef', paddingBottom: '0.5rem' }}>
+                <button 
+                    onClick={() => setViewTab('sow')} 
+                    style={{ padding: '0.7rem 1.5rem', background: viewTab === 'sow' ? '#17a2b8' : 'transparent', color: viewTab === 'sow' ? 'white' : '#495057', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                    📄 High-Level Design (HLD)
+                </button>
+                <button 
+                    onClick={() => setViewTab('bom')} 
+                    style={{ padding: '0.7rem 1.5rem', background: viewTab === 'bom' ? '#007bff' : 'transparent', color: viewTab === 'bom' ? 'white' : '#495057', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                    📊 Structured BOM
                 </button>
             </div>
 
-            <div style={{ background: 'white', padding: '1rem', borderRadius: '4px', border: '1px solid #dee2e6' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ background: '#343a40', color: 'white' }}>
-                        <tr>
-                            <th style={{ padding: '0.75rem', textAlign: 'left' }}>Location</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'left' }}>Category</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'left' }}>Item</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'left' }}>Model</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'left' }}>Description</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'center' }}>Qty</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'right' }}>Unit Price</th>
-                            <th style={{ padding: '0.75rem', textAlign: 'right' }}>Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {bom.map((item: BomItem, index: number) => (
-                            <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
-                                <td style={{ padding: '0.75rem' }}>{item.location}</td>
-                                <td style={{ padding: '0.75rem' }}>{item.category}</td>
-                                <td style={{ padding: '0.75rem', fontWeight: 'bold', color: '#007bff' }}>{item.device_type}</td>
-                                <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{item.model}</td>
-                                <td style={{ padding: '0.75rem' }}>{item.description}</td>
-                                <td style={{ padding: '0.75rem', textAlign: 'center' }}>{item.quantity}</td>
-                                <td style={{ padding: '0.75rem', textAlign: 'right' }}>{item.unit_price.toLocaleString(undefined, { style: 'currency', currency: item.currency })}</td>
-                                <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold' }}>{item.total_price.toLocaleString(undefined, { style: 'currency', currency: item.currency })}</td>
-                            </tr>
-                        ))}
-                        <tr style={{ background: '#f8f9fa' }}>
-                            <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>Subtotal:</td>
-                            <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.1rem' }}>{subTotal.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
-                        </tr>
-                        {discountRate > 0 && (
-                            <tr style={{ background: '#fff3cd', color: '#856404' }}>
-                                <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>Discount ({discountRate}%):</td>
-                                <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.1rem' }}>- {discountAmount.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
-                            </tr>
-                        )}
-                        <tr style={{ background: '#d4edda', fontWeight: 'bold', borderTop: '2px solid #28a745' }}>
-                            <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontSize: '1.2rem' }}>Final Total:</td>
-                            <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.3rem', color: '#155724' }}>{finalTotal.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
-                        </tr>
-                    </tbody>
-                </table>
+            {/* Sizing Summary Header */}
+            <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#e9eef5', borderRadius: '8px', borderLeft: '4px solid #007bff' }}>
+                <h3 style={{ marginTop: 0, color: '#0056b3' }}>Derived Sizing for {sizing.location || 'Site'}</h3>
+                <ul style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', listStyle: 'none', padding: 0 }}>
+                    <li><strong>Total Ports Needed:</strong> {sizing.total_ports_needed}</li>
+                    <li><strong>Switches Required:</strong> {sizing.switches_required_48_port}</li>
+                    <li><strong>PoE Ports Available/Required:</strong> {sizing.poe_ports_required}</li>
+                    <li><strong>Uplink Trunks Required:</strong> {sizing.uplinks_required}</li>
+                </ul>
             </div>
 
+            {viewTab === 'bom' ? (
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h2>Final Bill of Materials ({currency})</h2>
+                        <button onClick={downloadCSV} style={{ padding: '0.6rem 1.2rem', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                            Download CSV
+                        </button>
+                    </div>
+
+                    <div style={{ background: 'white', padding: '1rem', borderRadius: '4px', border: '1px solid #dee2e6', overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead style={{ background: '#343a40', color: 'white' }}>
+                                <tr>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Location</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Category</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Item</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'center' }}>Image</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Model</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'center' }}>Qty</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Unit Price</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {bom.map((item: BomItem, index: number) => (
+                                    <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
+                                        <td style={{ padding: '0.75rem' }}>{item.location}</td>
+                                        <td style={{ padding: '0.75rem' }}>{item.category}</td>
+                                        <td style={{ padding: '0.75rem', fontWeight: 'bold', color: '#007bff' }}>{item.device_type}</td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                                            {item.image_url ? (
+                                                <img src={item.image_url} alt={item.model} style={{ width: '25px', height: '25px', objectFit: 'contain', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '4px' }} referrerPolicy="no-referrer" />
+                                            ) : '-'}
+                                        </td>
+                                        <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{item.model}</td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>{item.quantity}</td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'right' }}>{item.unit_price.toLocaleString(undefined, { style: 'currency', currency: item.currency })}</td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold' }}>{item.total_price.toLocaleString(undefined, { style: 'currency', currency: item.currency })}</td>
+                                    </tr>
+                                ))}
+                                <tr style={{ background: '#f8f9fa' }}>
+                                    <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>Subtotal:</td>
+                                    <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.1rem' }}>{subTotal.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
+                                </tr>
+                                {discountRate > 0 && (
+                                    <tr style={{ background: '#fff3cd', color: '#856404' }}>
+                                        <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>Discount ({discountRate}%):</td>
+                                        <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.1rem' }}>- {discountAmount.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
+                                    </tr>
+                                )}
+                                <tr style={{ background: '#d4edda', fontWeight: 'bold', borderTop: '2px solid #28a745' }}>
+                                    <td colSpan={7} style={{ padding: '1rem', textAlign: 'right', fontSize: '1.2rem' }}>Final Total:</td>
+                                    <td style={{ padding: '1rem', textAlign: 'right', fontSize: '1.3rem', color: '#155724' }}>{finalTotal.toLocaleString(undefined, { style: 'currency', currency: currency })}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h2>High-Level Design Document</h2>
+                        <button onClick={downloadHLD} style={{ padding: '0.6rem 1.2rem', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                            Download HLD (.md)
+                        </button>
+                    </div>
+                    <div style={{ background: '#ffffff', padding: '2rem', borderRadius: '6px', border: '1px solid #dee2e6', maxHeight: '600px', overflowY: 'auto' }}>
+                        <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', color: '#2c3e50', lineHeight: 1.6, margin: 0 }}>
+                            <ReactMarkdown 
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                    h1: ({node, ...props}: any) => <h1 style={{color: '#1a365d', marginTop: '1.5rem', marginBottom: '1rem', borderBottom: '2px solid #2b6cb0', paddingBottom: '0.5rem', fontSize: '2rem'}} {...props} />,
+                                    h2: ({node, ...props}: any) => <h2 style={{color: '#2b6cb0', marginTop: '1.5rem', marginBottom: '0.8rem', fontSize: '1.5rem'}} {...props} />,
+                                    h3: ({node, ...props}: any) => <h3 style={{color: '#2c5282', marginTop: '1.2rem', marginBottom: '0.6rem', fontSize: '1.25rem'}} {...props} />,
+                                    table: ({node, ...props}: any) => <div style={{overflowX: 'auto', margin: '1.5rem 0'}}><table style={{width: '100%', borderCollapse: 'collapse', border: '1px solid #e2e8f0'}} {...props} /></div>,
+                                    thead: ({node, ...props}: any) => <thead style={{background: '#2d3748', color: '#ffffff'}} {...props} />,
+                                    th: ({node, ...props}: any) => <th style={{padding: '0.75rem', textAlign: 'left', fontWeight: 'bold'}} {...props} />,
+                                    td: ({node, ...props}: any) => <td style={{borderBottom: '1px solid #edf2f7', padding: '0.75rem'}} {...props} />,
+                                    blockquote: ({node, ...props}: any) => <blockquote style={{borderLeft: '4px solid #3182ce', paddingLeft: '1rem', margin: '1rem 0', color: '#4a5568', fontStyle: 'italic'}} {...props} />,
+                                    li: ({node, ...props}: any) => <li style={{marginBottom: '0.5rem'}} {...props} />,
+                                    img: ({node, ...props}: any) => <img style={{maxWidth: '150px', height: 'auto', borderRadius: '6px', margin: '0.5rem 1rem 1rem 0', boxShadow: '0 4px 6px rgba(0,0,0,0.1)'}} {...props} />
+                                }}
+                            >
+                                {sow_text}
+                            </ReactMarkdown>
+                        </div>
+                    </div>
+                </div>
+            )}
 
         </div>
     );
-};
+};;
 
 // ==========================================
 // HIGH LEVEL DESIGN COMPONENT
@@ -419,6 +486,47 @@ const HighLevelDesign: React.FC = () => {
 };
 
 // ==========================================
+// CHAT INPUT COMPONENT
+// ==========================================
+
+interface ChatInputProps {
+    onGenerate: (text: string) => void;
+    loading: boolean;
+}
+
+const ChatInput: React.FC<ChatInputProps> = ({ onGenerate, loading }) => {
+    const [text, setText] = useState<string>("");
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (text.trim()) {
+            onGenerate(text);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <label style={{ fontWeight: 'bold', color: '#495057' }}>Describe your network requirements</label>
+            <textarea
+                rows={8}
+                placeholder="e.g. outline the design for a office in London for 100 users, 20 APs, High Availability, Cisco..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: '1px solid #ced4da', resize: 'vertical', fontSize: '1rem' }}
+                required
+            />
+            <button
+                type="submit"
+                disabled={loading}
+                style={{ padding: '1rem', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', fontSize: '1.1rem', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+            >
+                {loading ? 'Analyzing & Generating...' : 'Generate with AI'}
+            </button>
+        </form>
+    );
+};
+
+// ==========================================
 // MAIN PAGE COMPONENT
 // ==========================================
 
@@ -426,6 +534,7 @@ const SowGeneratorPage: React.FC = () => {
     const [result, setResult] = useState<GenerateSowResponse | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<'form' | 'chat'>('chat');
 
     const handleGenerate = async (formData: FormData) => {
         setLoading(true);
@@ -441,14 +550,51 @@ const SowGeneratorPage: React.FC = () => {
         }
     };
 
+    const handleChatGenerate = async (text: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const response = await axios.post<GenerateSowResponse>('http://localhost:8000/api/generate-sow/chat/', { text });
+            setResult(response.data);
+        } catch (err: any) {
+            console.error(err);
+            if (err.response && err.response.data && err.response.data.detail) {
+                setError(err.response.data.detail);
+            } else {
+                setError("Failed to generate BOM from description. Ensure backend is running and AI service is configured.");
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="page-container">
             <h1>Bill Of Materials Generator</h1>
-            <p>Enter your office requirements below.</p>
+            <p style={{ color: '#666' }}>Generate a network configuration using a natural description or a manual form.</p>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <button 
+                    onClick={() => setActiveTab('chat')} 
+                    style={{ padding: '0.8rem 1.2rem', background: activeTab === 'chat' ? '#007bff' : '#e9ecef', color: activeTab === 'chat' ? 'white' : '#495057', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                    💡 AI Chat Description
+                </button>
+                <button 
+                    onClick={() => setActiveTab('form')} 
+                    style={{ padding: '0.8rem 1.2rem', background: activeTab === 'form' ? '#007bff' : '#e9ecef', color: activeTab === 'form' ? 'white' : '#495057', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                    📋 Manual Form
+                </button>
+            </div>
 
             <div className="card" style={{ background: 'white', padding: '2rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                <RequirementForm onGenerate={handleGenerate} loading={loading} />
-                {error && <div style={{ color: 'red', marginTop: '1rem' }}>{error}</div>}
+                {activeTab === 'chat' ? (
+                    <ChatInput onGenerate={handleChatGenerate} loading={loading} />
+                ) : (
+                    <RequirementForm onGenerate={handleGenerate} loading={loading} />
+                )}
+                {error && <div style={{ color: '#721c24', background: '#f8d7da', padding: '1rem', marginTop: '1rem', borderRadius: '4px', borderLeft: '4px solid #dc3545' }}><strong>Error:</strong> {error}</div>}
             </div>
 
             {result && <OutputView data={result} />}

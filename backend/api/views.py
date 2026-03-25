@@ -4,6 +4,8 @@ import os
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import HttpResponse
+import requests
 
 from .serializers import SowRequestSerializer
 from .services import SizingService, OpenAIService, DIAGRAMS_AVAILABLE
@@ -42,13 +44,70 @@ class GenerateSowView(APIView):
         # 2. Build BOM + generate SOW text (both async)
         async def _gather():
             bom = await SizingService.calculate_bom(data, sizing)
-            sow_text = await OpenAIService.generate_sow_content(sizing)
+            sow_text = await OpenAIService.generate_sow_content(sizing, bom)
             return bom, sow_text
 
         bom, sow_text = run_async(_gather())
 
         return Response(
             {
+                "sizing": sizing,
+                "bom": bom,
+                "sow_text": sow_text,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GenerateSowFromChatView(APIView):
+    """
+    POST /api/generate-sow/chat/
+    Accepts a natural language 'text' prompt, extracts requirements via AI, 
+    and returns sizing data, BOM, and SOW.
+    """
+
+    def post(self, request):
+        text = request.data.get('text', '')
+        if not text:
+            return Response({"detail": "Text is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Parse text using AI
+        async def _parse():
+            return await OpenAIService.parse_chat_to_requirements(text)
+
+        try:
+            parsed_data = run_async(_parse())
+        except Exception as e:
+             return Response({"detail": f"Failed to parse requirements with AI: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 2. Validate with serializer
+        serializer = SowRequestSerializer(data=parsed_data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "detail": "AI extracted requirements that failed validation. Please refine details or use the manual form.",
+                    "errors": serializer.errors,
+                    "extracted_data": parsed_data
+                }, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+
+        # 3. Calculate sizing (synchronous)
+        sizing = SizingService.calculate_sizing(data)
+
+        # 4. Build BOM + generate SOW text (both async)
+        async def _gather():
+            bom = await SizingService.calculate_bom(data, sizing)
+            sow_text = await OpenAIService.generate_sow_content(sizing, bom)
+            return bom, sow_text
+
+        bom, sow_text = run_async(_gather())
+
+        return Response(
+            {
+                "extracted_requirements": data,
                 "sizing": sizing,
                 "bom": bom,
                 "sow_text": sow_text,
@@ -156,3 +215,26 @@ class HealthCheckView(APIView):
             {"message": "Network SOM/SOW Generator API is running."},
             status=status.HTTP_200_OK,
         )
+
+class ImageProxyView(APIView):
+    """GET /api/image-proxy/?url=<encoded_url>  — Proxies images to bypass hotlink protection."""
+
+    def get(self, request):
+        url = request.GET.get('url')
+        if not url:
+            return HttpResponse("URL not provided", status=400)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer": "https://www.google.com/"
+        }
+        try:
+            r = requests.get(url, headers=headers, stream=True, timeout=5)
+            if r.status_code == 200:
+                content_type = r.headers.get('content-type', 'image/png')
+                return HttpResponse(r.content, content_type=content_type)
+            else:
+                return HttpResponse(f"Upstream Error {r.status_code}", status=404)
+        except Exception as e:
+            return HttpResponse(f"Proxy Error: {str(e)}", status=500)
