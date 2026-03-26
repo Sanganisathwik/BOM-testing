@@ -284,6 +284,27 @@ const OutputView: React.FC<OutputViewProps> = ({ data }) => {
         document.body.removeChild(element);
     };
 
+    const downloadDocx = async () => {
+        try {
+            const response = await axios.post('http://localhost:8000/api/export-docx/', 
+                { markdown: sow_text }, 
+                { responseType: 'blob' }
+            );
+            const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const filenameLoc = sizing.location ? sizing.location.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'predicted';
+            link.setAttribute('download', `${filenameLoc}_HLD.docx`);
+            document.body.appendChild(link);
+            link.click();
+            if (link.parentNode) link.parentNode.removeChild(link);
+        } catch (error) {
+            console.error("Failed to download DOCX", error);
+            alert("Failed to generate Word document.");
+        }
+    };
+
     return (
         <div className="output-view" style={{ marginTop: '3rem' }}>
             
@@ -376,9 +397,14 @@ const OutputView: React.FC<OutputViewProps> = ({ data }) => {
                 <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <h2>High-Level Design Document</h2>
-                        <button onClick={downloadHLD} style={{ padding: '0.6rem 1.2rem', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                            Download HLD (.md)
-                        </button>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button onClick={downloadHLD} style={{ padding: '0.6rem 1.2rem', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                Download HLD (.md)
+                            </button>
+                            <button onClick={downloadDocx} style={{ padding: '0.6rem 1.2rem', background: '#0d6efd', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                Download HLD (.docx)
+                            </button>
+                        </div>
                     </div>
                     <div style={{ background: '#ffffff', padding: '2rem', borderRadius: '6px', border: '1px solid #dee2e6', maxHeight: '600px', overflowY: 'auto' }}>
                         <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', color: '#2c3e50', lineHeight: 1.6, margin: 0 }}>

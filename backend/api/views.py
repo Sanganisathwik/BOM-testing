@@ -9,6 +9,10 @@ import requests
 
 from .serializers import SowRequestSerializer
 from .services import SizingService, OpenAIService, DIAGRAMS_AVAILABLE
+import markdown
+from docx import Document
+from htmldocx import HtmlToDocx
+from io import BytesIO
 
 # ────────────────────────────────────────────────────────────
 # Helpers
@@ -16,9 +20,9 @@ from .services import SizingService, OpenAIService, DIAGRAMS_AVAILABLE
 
 from asgiref.sync import async_to_sync
 
-def run_async(coro):
+def run_async(coro_func, *args):
     """Run an async coroutine from a sync Django view safely."""
-    return async_to_sync(lambda: coro)()
+    return async_to_sync(coro_func)(*args)
 
 
 # ────────────────────────────────────────────────────────────
@@ -47,7 +51,7 @@ class GenerateSowView(APIView):
             sow_text = await OpenAIService.generate_sow_content(sizing, bom)
             return bom, sow_text
 
-        bom, sow_text = run_async(_gather())
+        bom, sow_text = run_async(_gather)
 
         return Response(
             {
@@ -76,7 +80,7 @@ class GenerateSowFromChatView(APIView):
             return await OpenAIService.parse_chat_to_requirements(text)
 
         try:
-            parsed_data = run_async(_parse())
+            parsed_data = run_async(_parse)
         except Exception as e:
              return Response({"detail": f"Failed to parse requirements with AI: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -103,7 +107,7 @@ class GenerateSowFromChatView(APIView):
             sow_text = await OpenAIService.generate_sow_content(sizing, bom)
             return bom, sow_text
 
-        bom, sow_text = run_async(_gather())
+        bom, sow_text = run_async(_gather)
 
         return Response(
             {
@@ -238,3 +242,40 @@ class ImageProxyView(APIView):
                 return HttpResponse(f"Upstream Error {r.status_code}", status=404)
         except Exception as e:
             return HttpResponse(f"Proxy Error: {str(e)}", status=500)
+
+
+class ExportSowWordView(APIView):
+    """
+    POST /api/export-docx/
+    Accepts markdown content and returns a .docx file.
+    """
+    def post(self, request):
+        md_text = request.data.get('markdown', '')
+        if not md_text:
+            return Response({"detail": "Markdown content is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Convert markdown to HTML
+            html_content = markdown.markdown(md_text, extensions=['tables'])
+
+            # Create a DOCX Document
+            document = Document()
+            new_parser = HtmlToDocx()
+            new_parser.add_html_to_document(html_content, document)
+
+            # Save to buffer
+            buffer = BytesIO()
+            document.save(buffer)
+            buffer.seek(0)
+
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            )
+            response['Content-Disposition'] = 'attachment; filename="High_Level_Design.docx"'
+            return response
+        except Exception as e:
+            return Response(
+                {"detail": f"Failed to generate Word document: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
